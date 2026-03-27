@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: openpip_poc
+      POSTGRES_USER: openpip
+      POSTGRES_PASSWORD: openpip
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6380:6379"
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://openpip:openpip@postgres:5432/openpip_poc
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data/uploads
+      PARSER_VERSION: psi_mitab_core15_v1
+    ports:
+      - "8000:8000"
+    volumes:
+      - upload_data:/data/uploads
+    depends_on:
+      - postgres
+      - redis
+
+  worker:
+    build: .
+    command: ["arq", "app.worker.WorkerSettings"]
+    environment:
+      DATABASE_URL: postgresql://openpip:openpip@postgres:5432/openpip_poc
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data/uploads
+      PARSER_VERSION: psi_mitab_core15_v1
+    volumes:
+      - upload_data:/data/uploads
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  pgdata:
+  upload_data:
