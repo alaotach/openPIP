@@ -74,6 +74,7 @@ Interactions deduplicated via `UNIQUE (dataset_id, pair_key, publication_id, sou
 |--------|------|---------|
 | POST | `/uploads/jobs` | Accept file upload, enqueue Phase 1 (validate) |
 | GET | `/uploads/jobs/{job_id}` | Poll job status (stage, counters, timestamps) |
+| GET | `/uploads/jobs/{job_id}/events` | Live progress stream via SSE |
 | POST | `/uploads/jobs/{job_id}/commit` | Trigger Phase 2 (write to DB) |
 | GET | `/uploads/jobs/{job_id}/errors` | JSON list of validation failures (paginated) |
 | GET | `/uploads/jobs/{job_id}/errors/export` | Errors as CSV download |
@@ -138,6 +139,27 @@ Expected response after validation completes:
 ```
 
 **Key:** `status=validated` means phase 1 passed; user can now review errors and commit.
+
+### Optional: Live progress stream (SSE)
+
+Instead of polling, stream progress events:
+
+```bash
+curl -N http://localhost:8000/uploads/jobs/550e8400-e29b-41d4-a716-446655440000/events
+```
+
+Example output:
+
+```text
+event: progress
+data: {"id":"...","stage":"validating","processed_rows":23,"failed_rows":1,...}
+
+event: progress
+data: {"id":"...","stage":"completed","status":"validated",...}
+
+event: done
+data: {}
+```
 
 ### 3. Review validation errors (JSON)
 
