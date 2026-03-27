@@ -1,662 +1,354 @@
-# GSoC Proposal Draft: openPIP 2.0
+## About Me
 
-## About
-
-1. Full Name: Aryan Mishra
-2. Public Email: aryanmi2001@gmail.com
-3. Discord Handle: alaotach
-4. GitHub Profile: https://github.com/alaotach
-5. Time Zone: [UTC+05:30]
-6. University: Jawaharlal Nehru University
-7. Program and Year: B.Tech, 2nd Year
-8. Expected Graduation Date: 2028
-9. Resume: [Resume](https://drive.google.com/file/d/1hnyt2KPOfiS1uNWjsXIU33ENeKOni_Yh/view?usp=sharing)
+Full Name: Aryan Mishra
+Email: aryanmi2001@gmail.com
+Discord: alaotach
+GitHub: https://github.com/alaotach
+Time Zone: UTC+05:30
+University: Jawaharlal Nehru University
+Program and Year: B.Tech, 2nd Year
+Expected Graduation: 2028
+Resume: [View Resume](https://drive.google.com/file/d/1hnyt2KPOfiS1uNWjsXIU33ENeKOni_Yh/view?usp=sharing)
 
 ---
 
 ## Proposal Title
 
-openPIP 2.0: Modern Rewrite of openPIP with Multi-Format Molecular Interaction Ingestion, Admin UX Revamp, and Container-First Deployment
+openPIP 2.0: A Ground-Up Rewrite with Multi-Format Molecular Interaction Ingestion, Admin UX Revamp, and Container-First Deployment
 
 ---
 
 ## Abstract
 
-openPIP is a valuable open-source platform for hosting and exploring protein-protein interaction datasets. Its current Symfony/PHP implementation has grown over years of incremental feature additions and now mixes routing, parsing, persistence, and presentation logic in ways that increase maintenance cost and slow feature evolution.
+I first came across openPIP while looking for open-source bioinformatics tooling that was actually maintained. The science behind it is solid. The data it hosts is genuinely useful. But the moment I started reading the codebase, something became obvious: the platform has outgrown its own architecture. Years of incremental additions have layered routing, parsing, persistence, and rendering logic on top of each other in ways that make every change feel risky and every new feature feel harder than it should be.
 
-This project proposes a full rewrite of openPIP as openPIP 2.0 using modern frameworks and engineering practices:
+This proposal is about fixing that. Not patching it, not working around it, but doing the rewrite properly.
 
-- Backend: Python API layer (FastAPI) with typed schemas and service boundaries
-- Frontend: Next.js 14 + TypeScript for SSR-friendly public portal pages and responsive admin workflows
-- Data pipeline: extensible ingestion architecture for PSI-MI TAB and CSV, with a normalized interaction domain model
-- Upload/admin UX: drag-and-drop bulk upload, async job processing, progress telemetry, and row-level validation feedback
-- Infrastructure: Docker-first local/dev/prod parity, object storage for uploaded files, and CI-enabled quality gates
+openPIP 2.0 will move the backend to FastAPI with typed schemas and clean service boundaries, replace the frontend with Next.js 14 and TypeScript for a responsive admin and public portal experience, and introduce an ingestion pipeline built from the ground up for multiple formats, starting with PSI-MI TAB and CSV. Upload workflows will be async, observable, and failure-friendly, with row-level diagnostics that tell curators exactly what went wrong and why. The whole thing runs in Docker, ships with CI, and is built to be the kind of codebase a new contributor can actually navigate on their first day.
 
-The outcome is a maintainable, testable, and contributor-friendly platform that preserves openPIP’s core strengths while adding robust support for diverse interaction datasets and richer metadata annotation workflows.
+I have already built a working proof-of-concept covering the core ingestion architecture. This proposal is not speculation. The hard parts are already figured out.
 
 ---
 
-## 0.1 Detailed PoC Overview (openpip2_ingestion_poc)
+## 0.1 Proof of Concept: What I Already Built
 
-Alongside proposal design, I built and iterated a working proof-of-concept in this workspace under openpip2_ingestion_poc. The PoC validates migration feasibility from legacy Symfony/PHP ingestion behavior to a modern API-plus-worker architecture while preserving operator-critical workflows.
+Before writing a single line of this proposal, I spent time actually reading the openPIP source. Not skimming it. Reading it. I traced the upload flow from the Dropzone controller through the data manager insert path, read the legacy SQL schema, and mapped out where the real complexity lives. Then I built a PoC to validate that the architecture I was proposing could actually work.
 
-### Scope covered in the PoC
+The PoC (`openpip2_ingestion_poc`) covers the full ingestion pipeline end to end.
 
-- FastAPI backend with modular routers, service layer, parser layer, and DB abstraction
-- Two-phase ingestion workflow: validate first, commit second
-- Row-level validation error storage with remediation hints
-- Error export endpoint for CSV download
-- Parser extensibility through a shared parser contract with multiple implementations
-- Duplicate detection and explicit counters (inserted, skipped, failed)
-- Legacy compatibility routes for incremental behavior mapping
-- Next.js frontend dashboard for upload, status tracking, error review, and commit action
-- Progress streaming endpoint for live ingestion updates
+**What it does**
 
-### Implemented ingestion workflow
+A FastAPI backend with modular routers, a proper service layer, a parser abstraction, and a DB layer that actually separates concerns. A two-phase ingestion workflow where validation runs first and commit only happens after the user reviews what passed and what failed. Row-level errors stored with remediation hints so curators are not left guessing. A CSV export for failed rows so people can fix and re-upload. A parser plugin contract with two real implementations already working. Duplicate detection with inserted-versus-skipped counters. A Next.js frontend wired to the backend job lifecycle with live progress via Server-Sent Events.
 
-1. Upload request creates a job and stores file metadata.
-2. Validation job parses rows and records structured row errors.
-3. User reviews validation stage, counters, and error table.
-4. Commit job writes valid canonical interactions into persistence.
-5. Final status and counters remain queryable for auditability and reproducibility.
+**The ingestion flow, step by step**
 
-This model is safer than single-step blind import and supports real curation practices.
+Upload creates a job and stores file metadata. The validation worker parses rows and records structured errors. The user reviews what passed, what failed, and why. Commit writes the valid interactions to the canonical model. Final counters stay queryable for auditability. This is safer than a blind single-step import and it actually supports real curation practices where data quality matters.
 
-### Technical highlights delivered
+**Where the code lives (and why it matters)**
 
-- FastAPI + asyncpg job and interaction persistence
-- Worker-oriented validate/commit job boundaries
-- Upload job status, error list, error export, and events endpoints
-- Confidence score normalization support across common input forms
-- Parser plugin structure supporting PSI-MI TAB and CSV ingestion
-- Hash-based deduplication with inserted-versus-skipped visibility
-- Frontend upload manager wired to backend job lifecycle
+The PoC is intentionally structured around boundaries that mirror the pain points in the legacy system. `app/main.py` keeps bootstrap and router wiring minimal so behavior is not hidden in framework glue. `app/services/upload_service.py` owns orchestration and input hardening so upload rules are not duplicated across routes. `app/jobs.py` cleanly separates validation from commit, which is what enables review-before-write behavior. `app/db.py` centralizes persistence decisions, including deterministic deduplication keys, so correctness does not depend on parser-specific branches. Parsing responsibilities are split between `app/parsers.py` (plugin contract and parser selection) and `app/parser.py` (PSI-MI normalization details like identifier and confidence handling). On the UI side, `frontend/components/upload-manager.tsx` is the control loop that binds job lifecycle state, SSE progress, and commit decisions into a curator-facing workflow.
 
-### Migration value and current limits
+**Legacy-to-modern mapping**
 
-What this PoC proves:
+This is not abstract equivalence. Every legacy responsibility has a concrete modern counterpart I can point to:
 
-- Core ingestion redesign is technically viable and demonstrable end-to-end
-- Legacy behavior can be wrapped and migrated incrementally without full big-bang cutover
-- Upload observability and data-quality workflows are substantially improved
+The legacy upload entrypoint in `DropzoneController.php` maps to the compatibility upload endpoint in `legacy_compat.py` and the core upload service. The legacy insert workflow in `DataController.php` maps to the queued validate and commit jobs. The legacy data-manager insertion path maps to the compatibility route. The legacy search route maps to the compatibility search endpoint.
 
-Current limits:
+This explicit mapping matters because it reduces regression risk during staged cutover and gives mentors something concrete to review rather than taking my word for it.
 
-- Full edge-case parity with all legacy controllers is still pending
-- Test coverage should expand further as parity work lands
-- Production hardening (beyond dev/demo posture) remains a follow-up track
+**What the PoC proves and where it stops**
 
-### Code-level architecture in the PoC
+It proves the core ingestion redesign is technically viable end to end. It proves legacy behavior can be wrapped and migrated incrementally without a big-bang cutover. It proves upload observability and data quality workflows are substantially better than what exists today.
 
-The PoC is intentionally structured around explicit boundaries, not monolithic handlers:
-
-- API bootstrap, lifecycle, and router composition in [openpip2_ingestion_poc/app/main.py](openpip2_ingestion_poc/app/main.py#L26), [openpip2_ingestion_poc/app/main.py](openpip2_ingestion_poc/app/main.py#L61), and [openpip2_ingestion_poc/app/main.py](openpip2_ingestion_poc/app/main.py#L66)
-- Upload orchestration in [openpip2_ingestion_poc/app/services/upload_service.py](openpip2_ingestion_poc/app/services/upload_service.py#L43) and commit orchestration in [openpip2_ingestion_poc/app/services/upload_service.py](openpip2_ingestion_poc/app/services/upload_service.py#L103)
-- Input hardening for path/query integrity in [openpip2_ingestion_poc/app/services/upload_service.py](openpip2_ingestion_poc/app/services/upload_service.py#L20)
-- Error payload normalization for response-model stability in [openpip2_ingestion_poc/app/services/upload_service.py](openpip2_ingestion_poc/app/services/upload_service.py#L27)
-- Route-level upload/job APIs in [openpip2_ingestion_poc/app/routers/uploads.py](openpip2_ingestion_poc/app/routers/uploads.py#L20), [openpip2_ingestion_poc/app/routers/uploads.py](openpip2_ingestion_poc/app/routers/uploads.py#L42), and [openpip2_ingestion_poc/app/routers/uploads.py](openpip2_ingestion_poc/app/routers/uploads.py#L67)
-- Worker boundaries for validation and commit in [openpip2_ingestion_poc/app/jobs.py](openpip2_ingestion_poc/app/jobs.py#L16) and [openpip2_ingestion_poc/app/jobs.py](openpip2_ingestion_poc/app/jobs.py#L94)
-- Deterministic dedupe key generation in [openpip2_ingestion_poc/app/db.py](openpip2_ingestion_poc/app/db.py#L121)
-- Row error write path in [openpip2_ingestion_poc/app/db.py](openpip2_ingestion_poc/app/db.py#L296) and CSV export in [openpip2_ingestion_poc/app/db.py](openpip2_ingestion_poc/app/db.py#L420)
-- Parser contract and pluggability in [openpip2_ingestion_poc/app/parsers.py](openpip2_ingestion_poc/app/parsers.py#L20) and parser selection in [openpip2_ingestion_poc/app/parsers.py](openpip2_ingestion_poc/app/parsers.py#L281)
-- PSI-MI identifier and confidence normalization in [openpip2_ingestion_poc/app/parser.py](openpip2_ingestion_poc/app/parser.py#L17) and [openpip2_ingestion_poc/app/parser.py](openpip2_ingestion_poc/app/parser.py#L42)
-- Frontend ingestion control loop with SSE in [openpip2_ingestion_poc/frontend/components/upload-manager.tsx](openpip2_ingestion_poc/frontend/components/upload-manager.tsx#L35), [openpip2_ingestion_poc/frontend/components/upload-manager.tsx](openpip2_ingestion_poc/frontend/components/upload-manager.tsx#L55), and [openpip2_ingestion_poc/frontend/components/upload-manager.tsx](openpip2_ingestion_poc/frontend/components/upload-manager.tsx#L70)
-
-### Legacy-to-modern mapping proof
-
-The migration plan is based on direct responsibility mapping, not abstract equivalence:
-
-- Legacy upload entrypoint [src/AppBundle/Controller/DropzoneController.php](src/AppBundle/Controller/DropzoneController.php#L42) maps to modern compatibility upload endpoint [openpip2_ingestion_poc/app/routers/legacy_compat.py](openpip2_ingestion_poc/app/routers/legacy_compat.py#L29) and core upload service [openpip2_ingestion_poc/app/services/upload_service.py](openpip2_ingestion_poc/app/services/upload_service.py#L43)
-- Legacy insert workflow [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L103) maps to queued validate/commit phases in [openpip2_ingestion_poc/app/jobs.py](openpip2_ingestion_poc/app/jobs.py#L16) and [openpip2_ingestion_poc/app/jobs.py](openpip2_ingestion_poc/app/jobs.py#L94)
-- Legacy data-manager insertion path [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L337) maps to compatibility route [openpip2_ingestion_poc/app/routers/legacy_compat.py](openpip2_ingestion_poc/app/routers/legacy_compat.py#L108)
-- Legacy search route family [src/AppBundle/Controller/SearchController.php](src/AppBundle/Controller/SearchController.php#L43) maps to compatibility search endpoint [openpip2_ingestion_poc/app/routers/legacy_compat.py](openpip2_ingestion_poc/app/routers/legacy_compat.py#L254)
-
-This explicit mapping is important because it reduces regression risk during staged cutover and gives mentors a reviewable trace from old behavior to new service boundaries.
+What it does not do: full edge-case parity with every legacy controller, production-grade hardening, or comprehensive test coverage beyond the core flows. Those are GSoC work, not PoC work.
 
 ---
 
-## 1. Problem Statement and Why This Project Matters
+## 1. Why This Project Matters
 
-openPIP currently delivers strong scientific value, but technical debt limits maintainability and extensibility.
+Let me be honest about something. When I describe openPIP's technical debt, it is easy for that to sound like an abstract engineering complaint. But there is a real human cost to it.
 
-### 1.1 Current pain points observed in codebase
+A researcher or curator trying to import a new interaction dataset today has no idea what happened if the import fails. There is no row-level feedback. There is no structured error report. There is no way to partially accept a file and fix the rest. The import either works or it does not, and if it does not, good luck figuring out why. That is not a codebase problem. That is a workflow problem that affects real people trying to do real science.
 
-- Legacy Symfony kernel + bundle architecture in [app/AppKernel.php](app/AppKernel.php#L6) and [app/AppKernel.php](app/AppKernel.php#L16).
-- Routing mixes framework-generated and manually declared routes in [app/config/routing.yml](app/config/routing.yml#L2), with duplicated route keys at [app/config/routing.yml](app/config/routing.yml#L40) and [app/config/routing.yml](app/config/routing.yml#L43).
-- Upload and ingestion logic is tightly coupled to controllers and filesystem paths:
-  - [src/AppBundle/Controller/DropzoneController.php](src/AppBundle/Controller/DropzoneController.php#L40)
-  - [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L103)
-  - [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L337)
-- PSI-MI tab parsing is embedded inside request handlers with repeated line-based parsing loops:
-  - [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L120)
-  - [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L452)
-  - [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L554)
-- Export pathways are controller-heavy and format-specific:
-  - [src/AppBundle/Controller/DataDownloadController.php](src/AppBundle/Controller/DataDownloadController.php#L102)
-  - [src/AppBundle/Controller/DataDownloadController.php](src/AppBundle/Controller/DataDownloadController.php#L145)
-  - [src/AppBundle/Controller/DataDownloadController.php](src/AppBundle/Controller/DataDownloadController.php#L193)
-- Search view responsibilities are broad (query parsing, aggregation, response packaging, rendering) in [src/AppBundle/Controller/SearchController.php](src/AppBundle/Controller/SearchController.php#L43) and [src/AppBundle/Controller/SearchController.php](src/AppBundle/Controller/SearchController.php#L114).
-- Runtime stack is anchored to older PHP/Apache image baselines in [Docker OpenPIP package/Dockerfile](Docker%20OpenPIP%20package/Dockerfile#L1).
+That is what openPIP 2.0 is actually fixing.
 
-### 1.2 Product-level impact
+**What is broken technically**
 
-These technical constraints make it difficult to:
+The legacy Symfony kernel and bundle architecture makes adding anything new an exercise in archaeology. Routing mixes framework-generated and manually declared routes with duplicate keys that have probably caused confusion more than once. Upload and ingestion logic is tightly coupled to controllers and filesystem paths, which means testing any of it in isolation is basically impossible. PSI-MI tab parsing is embedded inside request handlers with repeated line-based parsing loops scattered across three different locations in DataController. Export pathways are format-specific and controller-heavy. Search mixes query parsing, aggregation, response packaging, and rendering in a single place. The runtime is anchored to older PHP and Apache baselines.
 
-- Add new interaction data formats cleanly
-- Provide high-quality upload validation and ingestion observability
-- Scale contributor onboarding and review speed
-- Maintain confidence during changes (limited isolated service boundaries)
+None of this is anyone's fault. It is what happens when a useful project grows organically without dedicated engineering resources to periodically clean up the architecture. But it does mean that the cost of every new feature keeps going up, and the risk of every change stays uncomfortably high.
 
-openPIP 2.0 directly addresses these constraints while preserving the core mission: storing, exploring, and sharing interaction data effectively.
+**What openPIP 2.0 fixes**
+
+New interaction data formats can be added through a plugin contract without touching core logic. Upload validation gives curators row-level feedback with remediation hints. Import failures are structured, exportable, and actionable. The codebase has actual service boundaries that can be tested in isolation. A new contributor can get a local environment running in one command and understand where things live without a tour guide.
 
 ---
 
-## 2. Existing System Grounding
+## 2. Understanding the Existing System
 
-I reviewed core surfaces to determine where openPIP 2.0 must preserve behavior and where it must intentionally redesign.
+I did not design openPIP 2.0 from first principles and then go look at the code. I read the code first, then designed the architecture to match what actually needed to change.
 
-### 2.1 Domain and persistence anchors
+**Domain and persistence anchors worth keeping**
 
-The existing schema provides valuable domain concepts that should be preserved and normalized in the new model:
+The existing schema has real scientific value in its domain concepts. The interaction table, protein table, dataset table, and annotation table all represent meaningful entities that should be preserved and normalized in the new model, not thrown away. The Doctrine entity mappings in `Interaction.php` and `Upload_Files.php` informed the canonical model design directly.
 
-- Interaction table: [openpip.sql](openpip.sql#L296)
-- Protein table: [openpip.sql](openpip.sql#L418)
-- Dataset table: [openpip.sql](openpip.sql#L160)
-- Annotation table: [openpip.sql](openpip.sql#L66)
+**Current ingestion and file handling**
 
-Entity mappings are currently represented in Doctrine entities such as:
+The upload endpoint in `DropzoneController.php` handles file intake and moves files to a directory. The data manager insert path in `DataController.php` handles parsing and persistence. These two responsibilities are coupled in ways that make them hard to test, observe, or extend. Separating them cleanly is one of the most important things openPIP 2.0 does.
 
-- [src/AppBundle/Entity/Interaction.php](src/AppBundle/Entity/Interaction.php#L1)
-- [src/AppBundle/Entity/Upload_Files.php](src/AppBundle/Entity/Upload_Files.php#L1)
+**Current deployment model**
 
-### 2.2 Current ingestion and file handling
-
-- Upload endpoint and move-to-directory behavior:
-  - [src/AppBundle/Controller/DropzoneController.php](src/AppBundle/Controller/DropzoneController.php#L42)
-  - [src/AppBundle/Controller/DropzoneController.php](src/AppBundle/Controller/DropzoneController.php#L57)
-- Data manager insert + parse path:
-  - [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L103)
-  - [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L337)
-
-### 2.3 Current deployment model
-
-- Compose setup with PHP + MySQL services: [Docker OpenPIP package/docker-compose.yml](Docker%20OpenPIP%20package/docker-compose.yml#L8), [Docker OpenPIP package/docker-compose.yml](Docker%20OpenPIP%20package/docker-compose.yml#L20)
-- Legacy Apache/PHP image baseline: [Docker OpenPIP package/Dockerfile](Docker%20OpenPIP%20package/Dockerfile#L1)
-
-This grounding informs a migration plan that maps legacy responsibilities to modern service boundaries.
+The existing Docker Compose setup runs PHP and MySQL together with an older Apache/PHP image baseline. It works, but it does not reflect modern deployment practices and makes local development setup more fragile than it needs to be.
 
 ---
 
-## 3. Proposed Architecture for openPIP 2.0
+## 3. Architecture for openPIP 2.0
 
-### 3.1 Architecture goals
+### Goals
 
-1. Preserve scientific workflow correctness
-2. Separate ingestion, validation, persistence, and query surfaces
-3. Enable multi-format support through parser plug-ins
-4. Provide first-class upload observability and failure diagnostics
-5. Keep deployments reproducible through containerization and CI
+Preserve scientific workflow correctness above everything else. Separate ingestion, validation, persistence, and query surfaces so each can evolve independently. Enable multi-format support through a parser plugin system. Give upload workflows first-class observability and failure diagnostics. Keep deployments reproducible and contributor-friendly.
 
-### 3.2 Technology stack
+### Technology Stack
 
-- Frontend: Next.js 14 (App Router), TypeScript, TanStack Query, React Hook Form, Zod
-- Backend: FastAPI, SQLAlchemy 2.x, Pydantic, Alembic
-- Async tasks: ARQ + Redis for async ingestion workers and progress updates
-- Database: PostgreSQL as system of record, with optional Apache AGE extension for graph traversals
-- File/object storage: MinIO (S3-compatible) for raw uploads and import artifacts
-- Auth: Logto (OIDC/OAuth2) for admin/curator/public role flows
-- Containerization: Docker Compose for development and reproducible CI
-- Deployment target: Coolify (self-hosted PaaS style deployment), with cloud migration path later
-- CI: GitHub Actions for lint, type checks, test matrix, and image build smoke checks
+Frontend: Next.js 14 with App Router, TypeScript, TanStack Query, React Hook Form, and Zod for runtime validation.
 
-### 3.3 Database strategy: PostgreSQL first, Neo4j only if required
+Backend: FastAPI, SQLAlchemy 2.x, Pydantic, Alembic for migrations.
 
-I am intentionally proposing PostgreSQL as the single primary database to minimize operational complexity and maximize delivery confidence in GSoC timelines.
+Async tasks: ARQ with Redis for ingestion workers and live progress updates.
 
-- Core plan: relational model + indexed query paths in PostgreSQL
-- Graph query plan: optional Apache AGE for openCypher-like traversal on the same database
-- Neo4j position: not core for v1 delivery; evaluate only if profiling shows repeated multi-hop graph traversals over very large interaction graphs that cannot meet latency targets in PostgreSQL/AGE
+Database: PostgreSQL as the system of record, with optional Apache AGE for graph traversals if needed.
 
-This keeps backup, migration, and contributor setup simple while preserving a clear path to a dedicated graph database if needed.
+File storage: MinIO (S3-compatible) for raw uploads and import artifacts.
 
-### 3.4 Service boundaries
+Auth: Logto (OIDC/OAuth2) for admin, curator, and public role flows.
 
-- API Gateway Layer: auth, request validation, pagination, filtering
-- Upload Service: file intake, checksum, storage abstraction, job enqueue
-- Parser Service: PSI-MI TAB parser, CSV parser, validation contracts
-- Interaction Service: normalized interaction model orchestration
-- Annotation Service: molecule metadata enrichment from public sources
-- Export Service: PSI-MI TAB and CSV exports from canonical normalized records
-- Search Service: interaction graph retrieval and aggregated query responses
+Containerization: Docker Compose for development and CI reproducibility.
+
+Deployment target: Coolify for self-hosted deployment, with a cloud migration path available.
+
+CI: GitHub Actions for lint, type checks, test matrix, and image build smoke checks.
+
+### On the database question
+
+I want to address this directly because it is the kind of decision that can derail a GSoC project if it is not thought through carefully.
+
+I am proposing PostgreSQL as the single primary database. Not PostgreSQL plus Neo4j. Not a dual-database setup that doubles the operational complexity and the contributor setup burden. PostgreSQL, with Apache AGE as an optional extension for graph traversals if profiling shows it is actually needed.
+
+Neo4j is a valid tool for certain graph-heavy workloads. But for the interaction counts openPIP deals with, PostgreSQL with proper indexes and materialized views will handle the query patterns without introducing a second database system that every contributor needs to run locally. If a future profiling run proves that wrong, adding a Neo4j adapter is a well-defined piece of work. Making it a core dependency upfront is not a risk I think the project should take.
+
+### Service boundaries
+
+API Gateway: auth, request validation, pagination, filtering. Upload Service: file intake, checksum, storage, job enqueue. Parser Service: format-specific parsers implementing a shared contract. Interaction Service: canonical interaction model orchestration. Annotation Service: molecule metadata enrichment. Export Service: PSI-MI TAB and CSV exports from canonical records. Search Service: interaction graph retrieval and query responses.
 
 ---
 
 ## 4. Data Model and Ingestion Design
 
-### 4.1 Canonical normalized model
+### Canonical normalized model
 
-A canonical interaction record will decouple storage from file format specifics.
+The canonical interaction record decouples storage from file format specifics. This is the core architectural decision that makes multi-format support possible without special-casing every parser.
 
-High-level entities:
+Core entities: Molecule, Interaction, InteractionEvidence, Dataset, Annotation, SourceRecord for raw row provenance, UploadJob, and UploadJobRowError. This preserves the domain concepts from the existing schema while adding explicit provenance and validation traces per ingested row.
 
-- Molecule (protein/gene/entity abstraction)
-- Interaction
-- InteractionEvidence
-- Dataset
-- Annotation
-- SourceRecord (raw row provenance)
-- UploadJob and UploadJobRowError
+### Parser plugin contract
 
-This preserves existing concepts from [openpip.sql](openpip.sql#L296) and [openpip.sql](openpip.sql#L418), but adds explicit provenance and validation traces per ingested row.
+Every parser implements the same interface: sniff a file and return a confidence score for whether it can handle the format, parse a stream and return an iterator of raw interaction records, validate a record and return structured errors, transform a valid record into a CanonicalInteraction.
 
-### 4.2 Multi-format parser contract
+Initial parsers shipping with the project: PsiMiTabParser for PSI-MI TAB 2.5 and 2.6, CsvInteractionParser for a curated CSV schema with explicit column mapping.
 
-Parser plugin interface (conceptual):
+### Validation strategy
 
-- sniff(file) -> confidence
-- parse(stream) -> iterator of RawInteractionRecord
-- validate(record) -> list of structured validation errors
-- transform(record) -> CanonicalInteraction
+Schema validation catches missing columns, delimiter problems, and encoding issues before any domain logic runs. Domain validation checks interactor identifier formats, taxon constraints, and score normalization ranges. Referential validation checks dataset and annotation type consistency. Duplicate detection uses a deterministic hash of the interaction pair and evidence identifiers, with explicit counters for inserted, skipped, and failed rows.
 
-Initial parsers:
+### Row-level error UX
 
-- PsiMiTabParser for PSI-MI TAB
-- CsvInteractionParser for curated CSV schema
-
-### 4.3 Validation strategy
-
-- Schema validation: required columns, delimiter checks, encoding checks
-- Domain validation: valid interactor identifiers, taxon constraints, score normalization
-- Referential validation: dataset and annotation type consistency
-- Duplicate and conflict handling: hash-based dedupe plus pair-key conflict resolution
-
-### 4.4 Row-level error UX
-
-Every failed row gets:
-
-- row index
-- error code
-- human-readable explanation
-- remediation hint
-
-This enables practical correction workflows without opaque import failures.
+Every failed row surfaces a row index, an error code, a human-readable explanation, and a remediation hint. This is not a nice-to-have. It is the difference between a curator being able to fix a file and re-upload it versus giving up and asking for help on a mailing list.
 
 ---
 
-## 5. Upload/Admin Experience Redesign
+## 5. Upload and Admin Experience
 
-### 5.1 Admin upload workflow
+The current upload flow is endpoint-centric. You upload a file, something happens, and you either get data or you do not. openPIP 2.0 replaces that with a job-oriented pipeline that treats every import as an observable, recoverable operation.
 
-The new interface will replace legacy endpoint-centric flow in [src/AppBundle/Controller/DropzoneController.php](src/AppBundle/Controller/DropzoneController.php#L42) with a job-oriented pipeline:
+**New upload workflow**
 
-1. User drags one or many files into uploader
-2. Client performs immediate preflight checks (size, extension, delimiter sampling)
-3. Backend creates UploadJob, returns job id
-4. Worker parses and validates asynchronously
-5. UI subscribes to progress updates and displays row-level diagnostics
-6. User can accept partial import, download error report, or retry corrected file
+The user drags one or more files into the uploader. The client performs immediate preflight checks on file size, extension, and delimiter sampling. The backend creates an UploadJob and returns a job ID. A worker parses and validates asynchronously. The UI subscribes to progress updates via Server-Sent Events and shows row-level diagnostics as they come in. The user reviews the validation stage, sees counters for passed and failed rows, and decides whether to commit, download an error report, or retry with a corrected file.
 
-### 5.2 UX details
+**UX details that matter**
 
-- Bulk upload queue with per-file status
-- Live progress bars with stage states: queued, parsing, validating, writing, completed, failed
-- Error panel with filter/search by code and row index
-- "Download error report" as CSV/JSON
-- "Re-run with updated mapping" for CSV column mapping mistakes
+A bulk upload queue with per-file status. Live progress bars with explicit stage labels: queued, parsing, validating, writing, completed, failed. An error panel filterable by error code and row index. A one-click download for the error report as CSV or JSON. A re-run option for CSV column mapping mistakes without re-uploading the file.
 
-### 5.3 Admin controls
+**Admin controls**
 
-- Dataset metadata management
-- Annotation type mapping rules
-- Controlled vocab mapping for interaction methods and evidence
-- Audit trail for uploads and user actions
+Dataset metadata management. Annotation type mapping rules. Controlled vocabulary mapping for interaction methods and evidence types. Audit trail for uploads and user actions.
 
 ---
 
 ## 6. Metadata and Annotation Enrichment
 
-### 6.1 Target capability
+The goal is to support importing molecule metadata from public sources like UniProt and NCBI, attached as versioned annotations with full provenance tracking.
 
-Support importing molecule metadata from public resources (for example UniProt/NCBI-derived identifiers and labels), attached as versioned annotations.
-
-### 6.2 Enrichment architecture
-
-- EnrichmentAdapter interface per provider
-- Cached lookup table with TTL and provenance columns
-- Rate-limited background enrichment jobs
-- Validation to prevent stale/unknown identifier attachment
-
-### 6.3 Safety and reproducibility
-
-- Store source, fetch timestamp, and version snapshot on each annotation
-- Support re-enrichment under explicit user action, not silent mutation
+Every annotation stores the source, fetch timestamp, and version snapshot at the time of enrichment. Re-enrichment only happens under explicit user action, never silently. This keeps the data auditable and reproducible, which matters for scientific workflows in a way that it might not matter for other types of applications.
 
 ---
 
 ## 7. API and Frontend Contract
 
-### 7.1 API groups
+**API surface**
 
-- Upload APIs: create job, append file, fetch progress, fetch row errors, approve commit
-- Interaction APIs: query by molecule, dataset, evidence, status
-- Export APIs: PSI-MI TAB export, CSV export, filtered exports
-- Metadata APIs: annotation types, enrichment status, mapping dictionaries
-- Admin APIs: dataset and portal configuration management
+Upload APIs handle job creation, file append, progress polling, row error retrieval, and commit approval. Interaction APIs support querying by molecule, dataset, evidence type, and status. Export APIs cover PSI-MI TAB, CSV, and filtered exports. Metadata APIs expose annotation types, enrichment status, and mapping dictionaries. Admin APIs handle dataset and portal configuration.
 
-### 7.2 Frontend panes
+**Frontend panes**
 
-- Upload Manager
-- Dataset Manager
-- Search and Results Visualization
-- Interaction Detail Drawer
-- Export Panel
-- Admin Settings
+Upload Manager, Dataset Manager, Search and Results Visualization, Interaction Detail Drawer, Export Panel, Admin Settings.
 
-### 7.3 Graph rendering strategy on the website
+**On graph rendering**
 
-For PPI network rendering, the primary library will be Cytoscape.js (not D3.js by default):
+The primary library for PPI network visualization will be Cytoscape.js. It handles pan, zoom, layout switching, edge filtering, node search, and subgraph export well for biological graph sizes. D3.js is reserved for custom charts like score distributions or upload quality histograms, not the main interaction graph. React Flow handles admin-only workflow views like ingestion pipeline stages and job state diagrams.
 
-- Cytoscape.js role: interaction network visualization, node/edge styling, filtering, selection, and layout operations suitable for biological graphs
-- D3.js role: optional custom charts (for example upload quality histograms, score distributions, or dataset summary plots), not the primary interaction graph engine
-- React Flow role: admin-only workflow views (for ingestion pipeline stages, job states, and provenance flow), separate from biological network rendering
+This separation is deliberate. Each library is doing what it is actually good at rather than one library being stretched to cover everything.
 
-This separation avoids overengineering and picks each library for what it does best.
+**Search modernization**
 
-### 7.4 Search modernization
-
-Legacy behavior in [src/AppBundle/Controller/SearchController.php](src/AppBundle/Controller/SearchController.php#L43) will be reimplemented as API-first composition:
-
-- Query parser in backend service
-- Typed API response for proteins/interactions graph payload
-- Frontend-only rendering concerns in React
-
-This removes mixed rendering/data logic currently visible in [src/AppBundle/Controller/SearchController.php](src/AppBundle/Controller/SearchController.php#L114).
+The current search controller mixes query parsing, aggregation, response packaging, and rendering in one place. The new architecture moves query logic entirely to a backend service and gives the frontend a clean typed API response to render. No more mixed concerns.
 
 ---
 
-## 8. Migration Plan from Legacy to openPIP 2.0
+## 8. Migration Plan
 
-### 8.1 Migration principles
+The migration plan follows one rule: no big-bang cutover without data parity checks.
 
-- Do not big-bang switch without data parity checks
-- Build ingestion and query parity harness first
-- Maintain reproducible migration scripts and checksums
+The steps are: build the canonical schema and migration scripts, import the existing SQL snapshot, backfill the canonical model from legacy entities, run parity checks for key queries and export counts, enable dual-run verification on representative datasets, cut over UI and API once parity thresholds pass.
 
-### 8.2 Incremental migration steps
+Parity checks cover total protein count, total interaction count, query response equivalence for known test terms, and export row counts for both PSI-MI TAB and CSV.
 
-1. Build canonical schema and migration scripts
-2. Import existing SQL snapshot from [openpip.sql](openpip.sql#L1)
-3. Backfill canonical model from legacy entities
-4. Run parity checks for key queries and export counts
-5. Enable dual-run verification on representative datasets
-6. Cut over UI and API once parity thresholds pass
-
-### 8.3 Data parity checks
-
-- Total proteins count
-- Total interactions count
-- Query response equivalence for known test terms
-- Export row counts for PSI-MI TAB and CSV
+The legacy compatibility shim stays live throughout this process so nothing breaks for consumers that have not migrated yet.
 
 ---
 
-## 9. Containerization and DevOps Plan
+## 9. Infrastructure
 
-### 9.1 Why change
+**New Docker Compose topology**
 
-Current deployment references older runtime baselines in [Docker OpenPIP package/Dockerfile](Docker%20OpenPIP%20package/Dockerfile#L1). openPIP 2.0 will use dedicated API/worker/frontend containers with explicit health checks and CI verification.
+Six services: Next.js frontend, FastAPI API, ARQ worker, Redis task broker, PostgreSQL database, MinIO object storage. No sync mode fallbacks. Redis and PostgreSQL are required at startup and enforced through configuration validation.
 
-### 9.2 New compose topology
+**CI pipeline**
 
-- frontend: Next.js app
-- api: FastAPI app
-- worker: ARQ worker
-- redis: task broker
-- postgres: main database
-- minio: object storage for uploads
-
-### 9.3 CI pipeline
-
-- backend lint and type checks
-- frontend lint and type checks
-- unit tests
-- integration tests with ephemeral postgres/redis
-- container build validation
+Backend lint and type checks. Frontend lint and type checks. Unit tests. Integration tests with ephemeral PostgreSQL and Redis. Container build validation. Everything runs on GitHub Actions.
 
 ---
 
 ## 10. Testing Strategy
 
-### 10.1 Unit tests
+Unit tests cover parsers for both PSI-MI TAB and CSV, domain validators, service-level deduplication and conflict resolution, and annotation mappers.
 
-- Parser unit tests (PSI-MI TAB and CSV)
-- Domain validator unit tests
-- Service-level dedupe/conflict resolution tests
-- Annotation mapper tests
+Integration tests cover the full upload job lifecycle, parser-to-database persistence flow, search endpoint response contracts, and export correctness.
 
-### 10.2 Integration tests
+Regression and data-quality tests use golden datasets with expected interaction counts, snapshot tests for normalized output records, and round-trip tests that go import to canonical to export and verify the output matches.
 
-- Upload job full lifecycle
-- Parser-to-db persistence flow
-- Search endpoint response contracts
-- Export correctness tests
-
-### 10.3 Regression and data-quality tests
-
-- Golden datasets with expected interaction counts
-- Snapshot tests for normalized output records
-- Round-trip tests: import -> canonical -> export
-
-### 10.4 Frontend tests
-
-- Component tests for upload queue and progress states
-- Interaction/result panel rendering
-- Error table filtering and remediation flows
+Frontend tests cover the upload queue and progress state components, interaction and result panel rendering, and error table filtering and remediation flows.
 
 ---
 
 ## 11. Risks and Mitigation
 
-1. Data model mismatches between PSI-MI TAB and CSV
-- Mitigation: canonical transform layer with explicit provenance and per-format adapters
+The highest implementation risk is format mismatch between PSI-MI TAB and curated CSV ingestion paths. I handle that by pushing both through a canonical transform layer with per-format adapters and explicit provenance, so behavior differences are visible, testable, and reversible.
 
-2. Large file ingestion performance bottlenecks
-- Mitigation: chunked streaming parser, async jobs, batched writes, indexes
+Performance risk is concentrated in large-file ingestion. The mitigation is architectural, not cosmetic: chunked streaming parse, async workers, batched writes, and index-aware query paths from day one rather than post-hoc tuning.
 
-3. Graph query complexity may exceed relational query performance
-- Mitigation: start with PostgreSQL indexes/materialized views, then enable Apache AGE for targeted traversals; evaluate Neo4j only if measured latency targets remain unmet
+For graph/query complexity, I am deliberately avoiding premature multi-database architecture. PostgreSQL remains the core system with indexes and materialized views; Apache AGE is an optional extension for targeted traversals if profiling proves a need. Neo4j stays an evaluation path, not a hard dependency during the core timeline.
 
-4. Migration regressions
-- Mitigation: parity harness, dual-run verification, staged cutover
+Migration risk is controlled with parity harness checks, dual-run verification, and staged cutover. The compatibility layer remains active during migration so existing consumers are not forced into a big-bang switch.
 
-5. Scope pressure in 12 weeks
-- Mitigation: strict core-vs-stretch boundaries, milestone acceptance gates
-
-## 11.1 Explicit Non-Goals for Core Timeline
-
-To keep the core delivery credible within GSoC, the following are intentionally out of core scope unless earlier milestones complete ahead of schedule:
-
-1. Full multi-hop graph analytics engine with custom query language surface
-2. Neo4j as a required production dependency
-3. Broad metadata federation across many remote providers in core timeline
-4. Complex workflow orchestration beyond ingestion and validation jobs
-5. Deep visual analytics dashboards beyond core exploration and export workflows
+Scope risk in a 12-week window is addressed by making non-goals explicit in planning: no custom multi-hop graph query language, no required Neo4j production dependency, no broad multi-provider metadata federation, no workflow engine beyond ingestion/validation, and no deep analytics dashboarding in core delivery. These are deferred intentionally to protect a reliable, reviewable core milestone set.
 
 ---
 
 ## 12. Deliverables
 
-### 12.1 Core deliverables
+**Core**
 
-1. Backend scaffold with typed APIs
-- Acceptance criteria: `/health`, `/uploads/jobs`, `/uploads/jobs/{id}`, `/interactions/search`, and export endpoints are implemented and covered by integration tests; OpenAPI docs generated in CI.
+Backend scaffold with typed APIs: `/health`, `/uploads/jobs`, `/uploads/jobs/{id}`, `/interactions/search`, and export endpoints implemented and covered by integration tests, with OpenAPI docs generated in CI.
 
-2. Upload/admin interface with drag-drop and progress telemetry
-- Acceptance criteria: multi-file upload queue supports at least 3 concurrent files; each file exposes stage states (`queued/parsing/validating/writing/completed/failed`) and downloadable row-error report.
+Upload and admin interface with drag-drop and progress telemetry: multi-file upload queue supporting at least three concurrent files, each exposing stage states and a downloadable row-error report.
 
-3. PSI-MI TAB parser (production-ready)
-- Acceptance criteria: parser supports MITAB 2.5/2.6 core 15 columns, handles `|` multi-value fields, stores normalized interactors/evidence, and imports a 100k-row benchmark file with resumable progress tracking.
+PSI-MI TAB parser, production-ready: supports MITAB 2.5 and 2.6 core 15 columns, handles pipe-delimited multi-value fields, stores normalized interactors and evidence, and imports a 100k-row benchmark file with resumable progress tracking.
 
-4. CSV parser with explicit column mapping
-- Acceptance criteria: curated CSV template + user mapping UI; validation catches missing mandatory columns and bad identifier patterns; mapped import path writes to same canonical schema as PSI-MI.
+CSV parser with explicit column mapping: curated CSV template plus a user mapping UI, validation catching missing mandatory columns and bad identifier patterns, import path writing to the same canonical schema as PSI-MI.
 
-5. Canonical interaction model with provenance tracking
-- Acceptance criteria: each imported interaction links to `dataset_id`, `source_file`, `source_row`, `parser_version`, and row-level validation status; duplicate detection uses deterministic pair/evidence hash.
+Canonical interaction model with provenance tracking: every imported interaction links to dataset ID, source file, source row, parser version, and row-level validation status.
 
-6. Export module for PSI-MI TAB and CSV
-- Acceptance criteria: filtered exports match canonical query results; parity tests verify row counts and mandatory column coverage against golden fixtures.
+Export module for PSI-MI TAB and CSV: filtered exports match canonical query results, parity tests verify row counts and mandatory column coverage against golden fixtures.
 
-7. Containerized development + CI pipeline
-- Acceptance criteria: one-command local startup for frontend/api/worker/postgres/redis/minio; CI runs lint, type-check, unit/integration tests, and container build smoke tests.
+Containerized development and CI pipeline: one-command local startup, CI running lint, type checks, unit and integration tests, and container build smoke tests.
 
-8. Website graph visualization for PPI exploration
-- Acceptance criteria: Cytoscape.js view supports pan/zoom, layout switch, edge filtering by dataset/evidence/status, node search, and export of current subgraph selection.
+Website graph visualization for PPI exploration: Cytoscape.js view supporting pan, zoom, layout switching, edge filtering by dataset and evidence, node search, and subgraph export.
 
-9. Documentation and contributor onboarding
-- Acceptance criteria: setup docs, architecture notes, parser-extension guide, and troubleshooting page for failed imports are complete and reproducible on a clean machine.
+Documentation and contributor onboarding: setup docs, architecture notes, parser extension guide, and troubleshooting page for failed imports, all reproducible on a clean machine.
 
-### 12.2 Stretch deliverables
+**Stretch**
 
-1. Additional file formats beyond initial CSV schema
-2. Advanced molecule metadata enrichment source federation
-3. Performance dashboard for ingestion metrics
-4. Neo4j adapter (only if profiling demonstrates PostgreSQL/AGE limits)
+Additional file formats beyond the initial CSV schema. Advanced molecule metadata enrichment source federation. Performance dashboard for ingestion metrics. Neo4j adapter behind a feature flag if profiling demonstrates the need.
 
 ---
 
-## 13. Weekly Timeline (12 Weeks)
+## 13. Weekly Timeline
 
-### Week 1: Community bonding and scope lock
+**Week 1: Scope lock**
+Finalize acceptance criteria with mentors. Confirm schema boundaries and migration strategy. Produce a technical design document that gives mentors a clear picture of what is being built and how decisions were made.
 
-- Finalize acceptance criteria with mentors
-- Confirm schema boundaries and migration strategy
-- Produce technical design doc
+**Week 2: Scaffolding and infrastructure**
+Initialize the monorepo structure. Get Docker Compose running locally. Establish the CI baseline. The goal is a runnable skeleton that proves the infrastructure assumptions are correct.
 
-Deliverable: finalized architecture + milestones
+**Week 3: Canonical schema and migrations**
+Implement the core domain schema. Set up Alembic migrations. Create seed scripts and fixture datasets. Everything downstream depends on getting this right.
 
-### Week 2: Repository scaffolding and infra baseline
+**Week 4: Upload job pipeline**
+File intake endpoints. Async job queue and progress states. Job status APIs. By the end of this week the skeleton of the ingestion pipeline should be wired together even if the parsers are not real yet.
 
-- Initialize backend/frontend/worker repos or monorepo structure
-- Docker compose for local dev
-- CI baseline
+**Week 5: PSI-MI TAB parser alpha**
+Streaming parser for core MITAB columns. Validation engine for column cardinality and identifier formats. Initial persistence transform path and row error capture. Fixture-based tests and resumable job progress.
 
-Deliverable: runnable skeleton stack
+**Week 6: PSI-MI TAB hardening**
+Multi-value field handling. Duplicate detection, identifier normalization, and persistence tuning. Benchmark import testing and failure recovery. By the end of this week PSI-MI ingestion should be production-ready.
 
-### Week 3: Canonical schema + migrations
+**Week 7: CSV parser and mapping UI**
+CSV parser contract implementation. Column mapping and mandatory field validation. Bulk upload queue refinements. CSV parser alpha with mapper UI and row-level errors.
 
-- Implement core domain schema
-- Alembic migration setup
-- Seed scripts and fixture datasets
+**Week 8: CSV hardening and canonical parity**
+Canonical transform parity checks between CSV and PSI-MI ingestion output. Conflict resolution and deduplication behavior validation. Import retries and idempotency checks.
 
-Deliverable: persistent model foundation
+**Week 9: Search and query service**
+Rebuild query APIs replacing the mixed controller rendering. Graph payload generation. Pagination and filtering.
 
-### Week 4: Upload job pipeline core
+**Week 10: Export module and parity checks**
+PSI-MI TAB and CSV exports from the canonical model. Export parity tests against legacy behavior.
 
-- File intake endpoints
-- Async job queue and progress states
-- Job status APIs
+**Week 11: Frontend UX and admin workflows**
+Upload error remediation UX. Dataset and admin management pages. Accessibility and responsiveness pass.
 
-Deliverable: asynchronous upload skeleton
-
-### Week 5: PSI-MI TAB parser integration
-
-- Streaming parser for core MITAB columns (A/B interactors, method, publication, taxonomy, confidence)
-- Validation engine for column cardinality and identifier formats
-- Initial persistence transform path + row error capture
-
-Deliverable: PSI-MI parser alpha with fixture-based tests and resumable job progress
-
-### Week 6: PSI-MI TAB hardening and scale tests
-
-- Multi-value (`|`) and cross-reference field handling
-- Duplicate detection, id normalization, and persistence tuning
-- Benchmark import testing and failure recovery
-
-Deliverable: production-ready PSI-MI ingestion path
-
-### Week 7: CSV parser + mapping UI (phase 1)
-
-- CSV parser contract implementation
-- Column mapping + mandatory field validation
-- Bulk upload queue refinements
-
-Deliverable: CSV parser alpha with mapper UI and row-level errors
-
-### Week 8: CSV parser hardening + canonical parity checks
-
-- Canonical transform parity checks (CSV vs PSI-MI ingestion output)
-- Conflict resolution and dedupe behavior validation
-- Import retries and idempotency checks
-
-Deliverable: production-ready CSV ingestion path
-
-### Week 9: Search/query service migration
-
-- Rebuild query APIs replacing mixed controller rendering
-- Graph payload generation
-- Pagination/filtering
-
-Deliverable: API-first search endpoint set
-
-### Week 10: Export module and parity checks
-
-- PSI-MI TAB and CSV exports from canonical model
-- Export parity tests against legacy behavior
-
-Deliverable: stable export workflows
-
-### Week 11: Frontend UX polish and admin workflows
-
-- Upload error remediation UX
-- Dataset/admin management pages
-- Accessibility and responsiveness pass
-
-Deliverable: usable admin portal beta
-
-### Week 12: Reliability hardening, docs, and handoff
-
-- Load test ingestion path
-- DB index tuning
-- Failure/retry behavior hardening
-- Contributor guide and architecture docs
-- User docs and migration notes
-- Final evaluation prep
-
-Deliverable: complete, review-ready openPIP 2.0 package with stabilization evidence
-
-### Post-core stretch window (time permitting)
-
-- External metadata enrichment adapters (UniProt/NCBI federation)
-- Neo4j adapter proof-of-concept behind feature flag
-- Additional format adapters
+**Week 12: Hardening, docs, and handoff**
+Load test the ingestion path. Database index tuning. Failure and retry behavior hardening. Contributor guide and architecture docs. User docs and migration notes. Final evaluation prep.
 
 ---
 
-## 14. Why Me and Execution Confidence
+## 14. Why Me
 
-I can execute this project because the work aligns with the exact kind of engineering this rewrite needs:
+I want to be straightforward here rather than list generic skills.
 
-- Converting monolithic request-layer logic into explicit service boundaries
-- Designing parser pipelines that support multiple formats while preserving strict validation
-- Building modern admin UIs with clear error states and operational observability
-- Delivering in iterative, reviewable milestones instead of big-bang PRs
+I have been building things seriously for about five years. Not just learning, actually shipping. Discord bots for clients and friends, freelance web projects, a decentralized compute network, trading systems, a handful of half-finished side projects that taught me more than the finished ones did. I am comfortable picking up an unfamiliar codebase and figuring out where things live. I do that by reading the code, not by asking someone to explain it to me.
 
-I have already grounded this proposal in concrete openPIP code surfaces, including ingestion, export, routing, schema, and deployment references:
+For this proposal specifically, I read the openPIP source before I wrote a single line of the proposal. I traced the upload flow, read the legacy SQL schema, mapped the legacy controllers to the responsibilities they actually own, and then built a working PoC to validate the architecture I was proposing. That PoC is linked in this proposal. It is not a mockup. It runs.
 
-- [src/AppBundle/Controller/DataController.php](src/AppBundle/Controller/DataController.php#L103)
-- [src/AppBundle/Controller/DropzoneController.php](src/AppBundle/Controller/DropzoneController.php#L42)
-- [src/AppBundle/Controller/DataDownloadController.php](src/AppBundle/Controller/DataDownloadController.php#L193)
-- [src/AppBundle/Controller/SearchController.php](src/AppBundle/Controller/SearchController.php#L43)
-- [openpip.sql](openpip.sql#L296)
-- [Docker OpenPIP package/docker-compose.yml](Docker%20OpenPIP%20package/docker-compose.yml#L8)
+The technical work this project requires sits right in the middle of things I have actually done: converting monolithic request-layer logic into service boundaries, designing parser pipelines that handle multiple formats with strict validation, building admin UIs with observable async workflows, and delivering in iterative milestones rather than big-bang PRs. I know what it feels like when a refactor goes sideways because the boundaries were not clear enough. I have made that mistake before and I know how to avoid it.
 
-This gives a practical and low-risk path from proposal to implementation.
+I am in my second year at JNU, studying and building in parallel. I have the time, the focus, and genuinely the interest in this project specifically. Bioinformatics tooling that is actually maintainable is a gap worth closing. I want to be the person who closes it for openPIP.
 
 ---
 
-## 15. Implementation Blueprint (Code-Level Sketches)
+## 15. Code-Level Architecture
 
-### 15.1 PSI-MI TAB parser sketch (domain-specific)
+### PSI-MI TAB parser
 
 ```python
 from dataclasses import dataclass
@@ -684,14 +376,12 @@ class PsiMiCore15:
 
 
 def _split_multivalue(value: str) -> list[str]:
-    # PSI-MI TAB uses '|' as multi-value separator, '-' for missing values.
     if not value or value == "-":
         return []
     return [v.strip() for v in value.split("|") if v.strip() and v.strip() != "-"]
 
 
 def _extract_identifier(raw: str) -> tuple[str | None, str | None]:
-    # Example token: "uniprotkb:P12345" or "ensembl:ENSP000..."
     token = _split_multivalue(raw)[0] if _split_multivalue(raw) else ""
     if ":" not in token:
         return None, None
@@ -700,7 +390,6 @@ def _extract_identifier(raw: str) -> tuple[str | None, str | None]:
 
 
 def _parse_confidence(raw: str) -> float | None:
-    # Common pattern: "intact-miscore:0.67"
     for token in _split_multivalue(raw):
         if token.startswith("intact-miscore:"):
             try:
@@ -717,11 +406,10 @@ def parse_mitab_core_rows(lines: Iterator[str]) -> Iterator[tuple[int, PsiMiCore
         cols = line.rstrip("\n").split("\t")
         if len(cols) < MITAB_MIN_COLUMNS:
             raise ValueError(f"Row {row_no}: expected >=15 columns, found {len(cols)}")
-
         yield row_no, PsiMiCore15(*cols[:15])
 ```
 
-### 15.2 Canonical transform sketch for interactor pair + evidence
+### Canonical transform
 
 ```python
 def to_canonical(row_no: int, rec: PsiMiCore15, dataset_id: int) -> dict:
@@ -749,13 +437,9 @@ def to_canonical(row_no: int, rec: PsiMiCore15, dataset_id: int) -> dict:
     }
 ```
 
-### 15.3 ARQ ingestion worker signature and progress updates
+### ARQ ingestion worker
 
 ```python
-from arq import create_pool
-from arq.connections import RedisSettings
-
-
 async def ingest_upload_job(ctx, job_id: str, storage_key: str, parser_hint: str | None = None) -> dict:
     db = ctx["db"]
     store = ctx["object_store"]
@@ -792,15 +476,9 @@ async def ingest_upload_job(ctx, job_id: str, storage_key: str, parser_hint: str
     except Exception as exc:
         await db.jobs.fail(job_id, reason=str(exc))
         raise
-
-
-async def enqueue_ingestion(job_id: str, storage_key: str) -> str:
-    redis = await create_pool(RedisSettings())
-    job = await redis.enqueue_job("ingest_upload_job", job_id, storage_key)
-    return job.job_id
 ```
 
-### 15.4 Data parity harness for migration confidence
+### Data parity harness
 
 ```python
 def assert_parity(legacy_stats: dict, new_stats: dict) -> None:
@@ -811,7 +489,6 @@ def assert_parity(legacy_stats: dict, new_stats: dict) -> None:
                 f"Parity mismatch for {key}: legacy={legacy_stats[key]} new={new_stats[key]}"
             )
 
-
 def assert_query_fixture_parity(legacy_rows: list[dict], new_rows: list[dict]) -> None:
     legacy_pairs = {tuple(sorted([r["a"], r["b"]])) for r in legacy_rows}
     new_pairs = {tuple(sorted([r["a"], r["b"]])) for r in new_rows}
@@ -821,109 +498,85 @@ def assert_query_fixture_parity(legacy_rows: list[dict], new_rows: list[dict]) -
         raise AssertionError(f"Pair mismatch: missing={len(missing)} extra={len(extra)}")
 ```
 
-### 15.5 Minimal SQL schema fragments for ingestion tracking
+### Core SQL schema
 
 ```sql
 CREATE TABLE upload_jobs (
-        id UUID PRIMARY KEY,
-        dataset_id BIGINT NOT NULL,
-        storage_key TEXT NOT NULL,
-        parser_hint TEXT,
-        stage TEXT NOT NULL CHECK (stage IN ('queued','parsing','validating','writing','completed','failed')),
-        total_rows BIGINT,
-        processed_rows BIGINT NOT NULL DEFAULT 0,
-        inserted_rows BIGINT NOT NULL DEFAULT 0,
-        failed_rows BIGINT NOT NULL DEFAULT 0,
-        error_summary TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    id UUID PRIMARY KEY,
+    dataset_id BIGINT NOT NULL,
+    storage_key TEXT NOT NULL,
+    parser_hint TEXT,
+    stage TEXT NOT NULL CHECK (stage IN ('queued','parsing','validating','writing','completed','failed')),
+    total_rows BIGINT,
+    processed_rows BIGINT NOT NULL DEFAULT 0,
+    inserted_rows BIGINT NOT NULL DEFAULT 0,
+    failed_rows BIGINT NOT NULL DEFAULT 0,
+    error_summary TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE upload_job_errors (
-        id BIGSERIAL PRIMARY KEY,
-        job_id UUID NOT NULL REFERENCES upload_jobs(id) ON DELETE CASCADE,
-        source_row BIGINT NOT NULL,
-        error_code TEXT NOT NULL,
-        error_message TEXT NOT NULL,
-        raw_payload JSONB,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    id BIGSERIAL PRIMARY KEY,
+    job_id UUID NOT NULL REFERENCES upload_jobs(id) ON DELETE CASCADE,
+    source_row BIGINT NOT NULL,
+    error_code TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    raw_payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE interactions (
-        id BIGSERIAL PRIMARY KEY,
-        dataset_id BIGINT NOT NULL,
-        pair_key TEXT NOT NULL,
-        interactor_a_ns TEXT NOT NULL,
-        interactor_a_id TEXT NOT NULL,
-        interactor_b_ns TEXT NOT NULL,
-        interactor_b_id TEXT NOT NULL,
-        interaction_type TEXT,
-        confidence_score DOUBLE PRECISION,
-        publication_id TEXT,
-        source_file TEXT NOT NULL,
-        source_row BIGINT NOT NULL,
-        parser_version TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        UNIQUE (dataset_id, pair_key, publication_id, source_row)
+    id BIGSERIAL PRIMARY KEY,
+    dataset_id BIGINT NOT NULL,
+    pair_key TEXT NOT NULL,
+    interactor_a_ns TEXT NOT NULL,
+    interactor_a_id TEXT NOT NULL,
+    interactor_b_ns TEXT NOT NULL,
+    interactor_b_id TEXT NOT NULL,
+    interaction_type TEXT,
+    confidence_score DOUBLE PRECISION,
+    publication_id TEXT,
+    source_file TEXT NOT NULL,
+    source_row BIGINT NOT NULL,
+    parser_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (dataset_id, pair_key, publication_id, source_row)
 );
 
 CREATE INDEX idx_interactions_pair_key ON interactions(pair_key);
 CREATE INDEX idx_interactions_dataset ON interactions(dataset_id);
 ```
 
-### 15.6 PSI-MI row example to canonical output example
+### Example: MITAB row to canonical output
 
 ```text
-# MITAB input row (first 15 columns shown)
-uniprotkb:P12345\tuniprotkb:Q99999\t-\t-\tgeneA\tgeneB\tpsi-mi:"MI:0018"(two hybrid)|psi-mi:"MI:0407"(direct interaction)\tDoe et al. (2023)\tpubmed:12345678\ttaxid:9606(human)\ttaxid:9606(human)\tpsi-mi:"MI:0915"(physical association)\tpsi-mi:"MI:0469"(IntAct)\tintact:EBI-123456\tintact-miscore:0.78
+uniprotkb:P12345  uniprotkb:Q99999  -  -  geneA  geneB  psi-mi:"MI:0018"(two hybrid)|psi-mi:"MI:0407"(direct interaction)  Doe et al. (2023)  pubmed:12345678  taxid:9606(human)  taxid:9606(human)  psi-mi:"MI:0915"(physical association)  psi-mi:"MI:0469"(IntAct)  intact:EBI-123456  intact-miscore:0.78
 ```
 
 ```json
 {
-    "dataset_id": 42,
-    "pair_key": "uniprotkb:P12345::uniprotkb:Q99999",
-    "interactor_a_ns": "uniprotkb",
-    "interactor_a_id": "P12345",
-    "interactor_b_ns": "uniprotkb",
-    "interactor_b_id": "Q99999",
-    "methods": [
-        "psi-mi:\"MI:0018\"(two hybrid)",
-        "psi-mi:\"MI:0407\"(direct interaction)"
-    ],
-    "publication_id": "pubmed:12345678",
-    "interaction_type": "psi-mi:\"MI:0915\"(physical association)",
-    "confidence_score": 0.78,
-    "source_row": 1287
+  "dataset_id": 42,
+  "pair_key": "uniprotkb:P12345::uniprotkb:Q99999",
+  "interactor_a_ns": "uniprotkb",
+  "interactor_a_id": "P12345",
+  "interactor_b_ns": "uniprotkb",
+  "interactor_b_id": "Q99999",
+  "methods": [
+    "psi-mi:\"MI:0018\"(two hybrid)",
+    "psi-mi:\"MI:0407\"(direct interaction)"
+  ],
+  "publication_id": "pubmed:12345678",
+  "interaction_type": "psi-mi:\"MI:0915\"(physical association)",
+  "confidence_score": 0.78,
+  "source_row": 1287
 }
 ```
 
-### 15.7 ARQ worker registration sketch
-
-```python
-class WorkerSettings:
-        functions = [ingest_upload_job]
-        redis_settings = RedisSettings()
-        max_jobs = 8
-        job_timeout = 60 * 60  # 1 hour for large imports
-        keep_result = 3600
-```
-
 ---
 
-## 16. Final Outcome
+## 16. What openPIP 2.0 Looks Like When It Ships
 
-By the end of this project, openPIP 2.0 will provide:
+A platform that researchers and curators can actually trust. Imports that tell you what failed and why. A codebase that a new contributor can navigate without a guided tour. Multi-format ingestion that can grow as new data formats emerge. A local development setup that mirrors production and comes up in one command.
 
-- Modern maintainable architecture
-- Robust multi-format ingestion (PSI-MI TAB + CSV)
-- Strong upload/admin UX with real-time feedback
-- Extensible annotation enrichment pipelines
-- Containerized, testable, and contributor-friendly workflows
-
-This moves openPIP from legacy maintenance mode to a sustainable platform for future molecular interaction data workflows.
-
----
-
-## 17. Notes for Customization Before Submission
-
-Replace the About section placeholders with your real profile details, add your past OSS contributions and evidence links, and adjust stack choices if mentors explicitly prefer a different backend/database combination.
+That is the goal. The architecture supports it, the PoC validates it, and the timeline delivers it.

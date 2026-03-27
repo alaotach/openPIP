@@ -5,7 +5,7 @@ from arq.connections import RedisSettings
 
 
 def get_database_url() -> str:
-    raw = os.getenv("DATABASE_URL", "postgres://avnadmin:AVNS_Gklh-5G8UJOGdlN_T2h@pg-337767e-openpip.a.aivencloud.com:10515/defaultdb?sslmode=require")
+    raw = os.getenv("DATABASE_URL", "")
     # Accept accidental shell wrapper values like: psql 'postgres://...'
     raw = raw.strip()
     if raw.startswith("psql "):
