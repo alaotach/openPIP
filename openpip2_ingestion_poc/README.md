@@ -92,6 +92,19 @@ Hash-based deduplication is applied at insert time:
 - GET /exports/datasets/{dataset_id}/mitab
 - GET /admin/settings
 
+Legacy-compatible routes converted from Symfony controllers:
+- GET /admin/media/upload
+- POST /admin/media/upload/process/{dir_name}
+- GET /admin/data_manager/{folder}/{file}
+- POST /admin/data_manager/insert_data/{folder}/{file}
+- GET /download/interaction_csv/{search_term}
+- GET /download/interactor_csv/{search_term}
+- GET /download/psi_mitab/{search_term}
+- GET /search/{search_term}
+- GET /search_results/{search_term}
+- GET /admin/search/{search_term}
+- GET or POST /search_results_interactions
+
 ## Run with Docker Compose
 
 From this directory:

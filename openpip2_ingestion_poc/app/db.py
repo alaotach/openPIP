@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS interactions (
     dataset_id BIGINT NOT NULL,
     pair_key TEXT NOT NULL,
     interaction_hash TEXT NOT NULL,
+    score TEXT,
+    removed TEXT DEFAULT '0',
+    binding_start TEXT,
+    binding_end TEXT,
     interactor_a_ns TEXT NOT NULL,
     interactor_a_id TEXT NOT NULL,
     interactor_b_ns TEXT NOT NULL,
@@ -53,6 +57,22 @@ CREATE TABLE IF NOT EXISTS annotations (
     key TEXT NOT NULL,
     value TEXT NOT NULL
 );
+
+CREATE OR REPLACE VIEW dataset AS
+SELECT id, name, description, source_file AS file_path
+FROM datasets;
+
+CREATE OR REPLACE VIEW protein AS
+SELECT id, primary_id AS uniprot_id, gene_name, protein_name
+FROM proteins;
+
+CREATE OR REPLACE VIEW interaction AS
+SELECT id, score, removed, binding_start, binding_end
+FROM interactions;
+
+CREATE OR REPLACE VIEW annotation AS
+SELECT id, key AS name, value AS description
+FROM annotations;
 
 CREATE TABLE IF NOT EXISTS upload_files (
     id UUID PRIMARY KEY,
@@ -313,17 +333,22 @@ async def bulk_insert_interactions(
             result = await conn.fetchval(
                 """
                 INSERT INTO interactions (
-                    dataset_id, pair_key, interaction_hash, interactor_a_ns, interactor_a_id,
+                    dataset_id, pair_key, interaction_hash, score, removed, binding_start, binding_end,
+                    interactor_a_ns, interactor_a_id,
                     interactor_b_ns, interactor_b_id, interaction_type, confidence_score,
                     publication_id, source_file, source_row, parser_version
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
                 ON CONFLICT (interaction_hash) DO NOTHING
                 RETURNING id
                 """,
                 row.dataset_id,
                 row.pair_key,
                 row_hash,
+                str(row.confidence_score) if row.confidence_score is not None else None,
+                "0",
+                None,
+                None,
                 row.interactor_a_ns,
                 row.interactor_a_id,
                 row.interactor_b_ns,

@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from .config import get_database_url, get_redis_settings, get_storage_root
 from .db import create_db_pool, init_db
-from .routers import admin, datasets, exports, search, uploads
+from .routers import admin, datasets, exports, legacy_compat, search, uploads
 
 app = FastAPI(title="openPIP 2.0 API", version="0.2.0")
 
@@ -38,3 +38,4 @@ app.include_router(search.router)
 app.include_router(exports.router)
 app.include_router(datasets.router)
 app.include_router(admin.router)
+app.include_router(legacy_compat.router)
