@@ -1,9 +1,16 @@
+from __future__ import annotations
+
 import os
 from arq.connections import RedisSettings
 
 
 def get_database_url() -> str:
-    return os.getenv("DATABASE_URL", "postgresql://openpip:openpip@localhost:5432/openpip_poc")
+    raw = os.getenv("DATABASE_URL", "postgres://avnadmin:AVNS_Gklh-5G8UJOGdlN_T2h@pg-337767e-openpip.a.aivencloud.com:10515/defaultdb?sslmode=require")
+    # Accept accidental shell wrapper values like: psql 'postgres://...'
+    raw = raw.strip()
+    if raw.startswith("psql "):
+        raw = raw[len("psql "):].strip().strip("\"'")
+    return raw
 
 
 def get_storage_root() -> str:

@@ -16,3 +16,5 @@ gsoc_openpip_2_proposal_draft.md
 # Python cache artifacts
 __pycache__/
 *.pyc
+node_modules/
+.next/

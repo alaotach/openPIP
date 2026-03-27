@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -9,16 +12,16 @@ class CanonicalInteraction:
     interactor_a_id: str
     interactor_b_ns: str
     interactor_b_id: str
-    interaction_type: str | None
-    confidence_score: float | None
-    publication_id: str | None
+    interaction_type: Optional[str]
+    confidence_score: Optional[float]
+    publication_id: Optional[str]
     source_file: str
     source_row: int
     parser_version: str
 
 
 class RowValidationError(Exception):
-    def __init__(self, row_no: int, code: str, message: str, raw_payload: str | None = None):
+    def __init__(self, row_no: int, code: str, message: str, raw_payload: Optional[str] = None):
         super().__init__(message)
         self.row_no = row_no
         self.code = code

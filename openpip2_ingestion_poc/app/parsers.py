@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Parser plugin contract and implementations.
 
 Each parser must implement:
@@ -7,7 +9,7 @@ Each parser must implement:
   - transform(canonical: CanonicalInteraction) -> dict (for storage/serialization)
 """
 
-from typing import Iterator, Protocol
+from typing import Iterator, Optional, Protocol
 from pathlib import Path
 from .models import CanonicalInteraction, RowValidationError
 from .parser import split_multivalue
@@ -276,7 +278,7 @@ def parse_line(
     )
 
 
-def get_parser(hint: str | None) -> InteractionParser:
+def get_parser(hint: Optional[str]) -> InteractionParser:
     """Select parser by hint or raise."""
     if hint == "csv":
         return CSVGeneInteractionParser()

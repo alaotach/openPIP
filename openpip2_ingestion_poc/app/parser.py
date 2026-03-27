@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from typing import Iterator
+from typing import Optional
 
 from .models import CanonicalInteraction, RowValidationError
 
@@ -36,7 +39,7 @@ def extract_identifier(raw: str, row_no: int) -> tuple[str, str]:
     return ns, value
 
 
-def parse_confidence(raw: str) -> float | None:
+def parse_confidence(raw: str) -> Optional[float]:
     """Parse confidence from PSI-MI TAB column 15.
     
     Handles multiple formats per PSI-MI 2.7 spec:

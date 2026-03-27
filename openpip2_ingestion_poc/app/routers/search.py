@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Optional
+
 from fastapi import APIRouter, Query, Request
 
 from ..schemas.api import SearchResponse
@@ -10,7 +14,7 @@ router = APIRouter(prefix="/search", tags=["search"])
 async def search_interactions(
     request: Request,
     q: str = Query(default=""),
-    dataset_id: int | None = Query(default=None),
+    dataset_id: Optional[int] = Query(default=None),
     limit: int = Query(default=100),
     offset: int = Query(default=0),
 ):

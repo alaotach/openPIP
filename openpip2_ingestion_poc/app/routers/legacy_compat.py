@@ -58,19 +58,26 @@ async def legacy_upload_process(
             storage_key=storage_key,
             parser_hint=parser_hint,
         )
-        queue_job = await request.app.state.redis.enqueue_job(
-            "validate_upload_job",
-            job_id,
-            dataset_id,
-            storage_key,
-            parser_hint,
-        )
+        queue_job_id = None
+        if request.app.state.redis is None:
+            ctx = {"db_pool": request.app.state.db_pool, "storage_root": str(request.app.state.storage_root)}
+            result = await validate_upload_job(ctx, job_id, dataset_id, storage_key, parser_hint)
+            queue_job_id = f"sync-{result['job_id']}"
+        else:
+            queue_job = await request.app.state.redis.enqueue_job(
+                "validate_upload_job",
+                job_id,
+                dataset_id,
+                storage_key,
+                parser_hint,
+            )
+            queue_job_id = queue_job.job_id if queue_job else None
         outputs.append(
             {
                 "uploaded": True,
                 "fileName": safe_name,
                 "job_id": job_id,
-                "queue_job_id": queue_job.job_id if queue_job else None,
+                "queue_job_id": queue_job_id,
             }
         )
 

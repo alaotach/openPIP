@@ -1,7 +1,11 @@
+from __future__ import annotations
+
+from typing import Optional
+
 from ..db import search_interactions
 
 
-async def search(*, db_pool, query: str, dataset_id: int | None, limit: int, offset: int) -> dict:
+async def search(*, db_pool, query: str, dataset_id: Optional[int], limit: int, offset: int) -> dict:
     rows = await search_interactions(
         pool=db_pool,
         query=query,

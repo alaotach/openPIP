@@ -121,6 +121,45 @@ Services:
 - minio api at http://localhost:9000
 - minio console at http://localhost:9001
 
+## Run Without Docker
+
+You can run the full demo without Docker by using:
+- local FastAPI server
+- local Next.js server
+- SYNC_JOB_MODE so uploads run immediately without Redis worker
+- any managed Postgres connection string (Neon, Supabase, Railway)
+
+PowerShell steps:
+
+  cd openpip2_ingestion_poc
+  py -3.11 -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
+
+Set environment variables:
+
+  $env:DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME"
+  $env:STORAGE_ROOT="./data/uploads"
+  $env:PARSER_VERSION="psi_mitab_core15_v1"
+  $env:SYNC_JOB_MODE="1"
+
+Run backend:
+
+  uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+In a second terminal run frontend:
+
+  cd openpip2_ingestion_poc\frontend
+  npm install
+  $env:NEXT_PUBLIC_API_BASE="http://localhost:8000"
+  npm run dev
+
+Open the app at http://localhost:3000
+
+Notes:
+- In SYNC_JOB_MODE, you do not need Redis or the ARQ worker process.
+- MinIO is optional in this local demo path because file storage uses STORAGE_ROOT.
+
 ## Curl Demo
 
 Upload a PSI-MI TAB file:

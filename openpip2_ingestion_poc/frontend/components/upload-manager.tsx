@@ -14,6 +14,10 @@ type Job = {
   failed_rows: number;
 };
 
+function isUuidLike(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export function UploadManager() {
   const [datasetId, setDatasetId] = useState("42");
   const [parserHint, setParserHint] = useState("psi_mitab");
@@ -41,9 +45,13 @@ export function UploadManager() {
     fd.append("parser_hint", parserHint);
 
     const res = await fetch(`${API_BASE}/uploads/jobs`, { method: "POST", body: fd });
-    const payload = await res.json();
-    setJobId(payload.job_id);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || !isUuidLike(payload?.job_id)) {
+      setBusy(false);
+      return;
+    }
 
+    setJobId(payload.job_id);
     const es = new EventSource(`${API_BASE}/uploads/jobs/${payload.job_id}/events`);
     es.addEventListener("progress", (ev) => {
       const data = JSON.parse((ev as MessageEvent).data);
@@ -53,12 +61,20 @@ export function UploadManager() {
       es.close();
       setBusy(false);
     });
+    es.onerror = () => {
+      es.close();
+      setBusy(false);
+    };
   }
 
   async function commitJob() {
     if (!jobId) return;
     setBusy(true);
-    await fetch(`${API_BASE}/uploads/jobs/${jobId}/commit`, { method: "POST" });
+    const commitRes = await fetch(`${API_BASE}/uploads/jobs/${jobId}/commit`, { method: "POST" });
+    if (!commitRes.ok) {
+      setBusy(false);
+      return;
+    }
     const es = new EventSource(`${API_BASE}/uploads/jobs/${jobId}/events`);
     es.addEventListener("progress", (ev) => {
       const data = JSON.parse((ev as MessageEvent).data);
@@ -68,6 +84,10 @@ export function UploadManager() {
       es.close();
       setBusy(false);
     });
+    es.onerror = () => {
+      es.close();
+      setBusy(false);
+    };
   }
 
   return (

@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 
 class JobCreateResponse(BaseModel):
     job_id: str
-    queue_job_id: str | None
+    queue_job_id: Optional[str]
     storage_key: str
 
 
@@ -27,8 +30,8 @@ class JobErrorItem(BaseModel):
     source_row: int
     error_code: str
     error_message: str
-    remediation_hint: str | None = None
-    raw_payload: dict | None = None
+    remediation_hint: Optional[str] = None
+    raw_payload: Optional[dict] = None
     created_at: datetime
 
 
@@ -44,9 +47,9 @@ class SearchItem(BaseModel):
     interactor_a_id: str
     interactor_b_ns: str
     interactor_b_id: str
-    interaction_type: str | None
-    confidence_score: float | None
-    publication_id: str | None
+    interaction_type: Optional[str]
+    confidence_score: Optional[float]
+    publication_id: Optional[str]
 
 
 class SearchResponse(BaseModel):
@@ -57,8 +60,8 @@ class SearchResponse(BaseModel):
 class DatasetItem(BaseModel):
     id: int
     name: str
-    description: str | None
-    source_file: str | None
+    description: Optional[str]
+    source_file: Optional[str]
     interaction_count: int
 
 
@@ -69,7 +72,7 @@ class DatasetListResponse(BaseModel):
 
 class CommitResponse(BaseModel):
     job_id: str
-    queue_job_id: str | None
+    queue_job_id: Optional[str]
     message: str
 
 

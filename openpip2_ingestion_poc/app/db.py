@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import uuid
 from collections.abc import AsyncIterator
+from typing import Optional
 
 import asyncpg
 
@@ -172,7 +175,7 @@ async def create_job(
     upload_file_id: str,
     dataset_id: int,
     storage_key: str,
-    parser_hint: str | None,
+    parser_hint: Optional[str],
 ) -> str:
     job_id = str(uuid.uuid4())
     async with pool.acquire() as conn:
@@ -190,18 +193,21 @@ async def create_job(
     return job_id
 
 
-async def get_job(pool: asyncpg.Pool, job_id: str) -> dict | None:
+async def get_job(pool: asyncpg.Pool, job_id: str) -> Optional[dict]:
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT id::text, upload_file_id::text, dataset_id, storage_key, parser_hint,
-                   stage, status, total_rows, processed_rows, inserted_rows, skipped_rows,
-                   failed_rows, error_summary, created_at, updated_at
-            FROM upload_jobs
-            WHERE id = $1::uuid
-            """,
-            job_id,
-        )
+        try:
+            row = await conn.fetchrow(
+                """
+                SELECT id::text, upload_file_id::text, dataset_id, storage_key, parser_hint,
+                       stage, status, total_rows, processed_rows, inserted_rows, skipped_rows,
+                       failed_rows, error_summary, created_at, updated_at
+                FROM upload_jobs
+                WHERE id = $1::uuid
+                """,
+                job_id,
+            )
+        except asyncpg.DataError:
+            return None
     return dict(row) if row else None
 
 
@@ -293,7 +299,7 @@ async def add_job_error(
     source_row: int,
     error_code: str,
     error_message: str,
-    raw_payload: str | None,
+    raw_payload: Optional[str],
 ) -> None:
     payload = json.dumps({"line": raw_payload}) if raw_payload else None
     async with pool.acquire() as conn:
@@ -424,7 +430,7 @@ async def get_job_errors_as_csv(pool: asyncpg.Pool, job_id: str) -> AsyncIterato
             job_id,
         )
 
-    def esc(val: object | None) -> str:
+    def esc(val: Optional[object]) -> str:
         if val is None:
             return ""
         text = str(val)
@@ -483,7 +489,7 @@ async def export_interactions_mitab(pool: asyncpg.Pool, dataset_id: int) -> Asyn
 async def search_interactions(
     pool: asyncpg.Pool,
     query: str,
-    dataset_id: int | None,
+    dataset_id: Optional[int],
     limit: int,
     offset: int,
 ) -> list[dict]:
