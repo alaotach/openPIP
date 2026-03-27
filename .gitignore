@@ -12,3 +12,7 @@
 # /composer.phar
 application_aryan_mishra_multi_protocol_support.md
 gsoc_openpip_2_proposal_draft.md
+
+# Python cache artifacts
+__pycache__/
+*.pyc

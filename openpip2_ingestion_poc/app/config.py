@@ -17,3 +17,15 @@ def get_parser_version() -> str:
 def get_redis_settings() -> RedisSettings:
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     return RedisSettings.from_dsn(redis_url)
+
+
+def get_minio_config() -> dict[str, str]:
+    return {
+        "endpoint": os.getenv("MINIO_ENDPOINT", "localhost:9000"),
+        "access_key": os.getenv("MINIO_ACCESS_KEY", "openpip"),
+        "secret_key": os.getenv("MINIO_SECRET_KEY", "openpipminio"),
+    }
+
+
+def get_logto_issuer() -> str:
+    return os.getenv("LOGTO_ISSUER", "http://logto.local")

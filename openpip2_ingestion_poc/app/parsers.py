@@ -11,6 +11,8 @@ from typing import Iterator, Protocol
 from pathlib import Path
 from .models import CanonicalInteraction, RowValidationError
 from .parser import split_multivalue
+from .parser import parse_mitab_line
+from .config import get_parser_version
 
 
 class InteractionParser(Protocol):
@@ -189,6 +191,89 @@ class CSVGeneInteractionParser:
             "confidence": canonical.confidence_score,
             "publication": canonical.publication_id,
         }
+
+
+def parse_csv_line(
+    row_no: int,
+    line: str,
+    dataset_id: int,
+    source_file: str,
+    parser_version: str,
+) -> CanonicalInteraction:
+    cols = [c.strip() for c in line.rstrip("\n").split(",")]
+    if len(cols) < 2:
+        raise RowValidationError(
+            row_no=row_no,
+            code="CSV_SHORT_COLS",
+            message=f"Expected >= 2 columns, found {len(cols)}",
+            raw_payload=line.rstrip("\n"),
+        )
+
+    gene_a = cols[0]
+    gene_b = cols[1]
+    if not gene_a or not gene_b:
+        raise RowValidationError(
+            row_no=row_no,
+            code="CSV_MISSING_INTERACTOR",
+            message="CSV row must include interactor_a and interactor_b",
+            raw_payload=line.rstrip("\n"),
+        )
+
+    confidence = None
+    if len(cols) > 3 and cols[3] not in ("", "-"):
+        try:
+            confidence = float(cols[3])
+        except ValueError as exc:
+            raise RowValidationError(
+                row_no=row_no,
+                code="CSV_BAD_CONFIDENCE",
+                message=f"Invalid confidence value: {cols[3]}",
+                raw_payload=line.rstrip("\n"),
+            ) from exc
+
+    publication = cols[4] if len(cols) > 4 and cols[4] not in ("", "-") else None
+    pair_key = "::".join(sorted([gene_a, gene_b]))
+
+    return CanonicalInteraction(
+        dataset_id=dataset_id,
+        pair_key=pair_key,
+        interactor_a_ns="entrez_id",
+        interactor_a_id=gene_a,
+        interactor_b_ns="entrez_id",
+        interactor_b_id=gene_b,
+        interaction_type="genetic",
+        confidence_score=confidence,
+        publication_id=publication,
+        source_file=source_file,
+        source_row=row_no,
+        parser_version=parser_version,
+    )
+
+
+def parse_line(
+    parser_hint: str,
+    row_no: int,
+    line: str,
+    dataset_id: int,
+    source_file: str,
+) -> CanonicalInteraction:
+    parser_version = get_parser_version()
+    if parser_hint == "csv":
+        return parse_csv_line(
+            row_no=row_no,
+            line=line,
+            dataset_id=dataset_id,
+            source_file=source_file,
+            parser_version=parser_version,
+        )
+
+    return parse_mitab_line(
+        row_no=row_no,
+        line=line,
+        dataset_id=dataset_id,
+        source_file=source_file,
+        parser_version=parser_version,
+    )
 
 
 def get_parser(hint: str | None) -> InteractionParser:

@@ -1,24 +1,13 @@
-import asyncio
-import json
-import os
-import uuid
 from pathlib import Path
 
 from arq import create_pool
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
-
+from fastapi import FastAPI
 
 from .config import get_database_url, get_redis_settings, get_storage_root
-from .db import (
-    create_db_pool,
-    create_job,
-    get_job,
-    get_job_errors_as_csv,
-    init_db,
-    list_job_errors,
-)
-app = FastAPI(title="openPIP 2.0 Ingestion POC", version="0.1.0")
+from .db import create_db_pool, init_db
+from .routers import admin, datasets, exports, search, uploads
+
+app = FastAPI(title="openPIP 2.0 API", version="0.2.0")
 
 
 @app.on_event("startup")
@@ -44,146 +33,8 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-@app.post("/uploads/jobs")
-async def create_upload_job(
-    file: UploadFile = File(...),
-    dataset_id: int = Form(...),
-    parser_hint: str | None = Form(default="psi_mitab"),
-):
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Missing filename")
-
-    safe_name = os.path.basename(file.filename)
-    storage_key = f"incoming/{uuid.uuid4().hex}_{safe_name}"
-    storage_path = app.state.storage_root / storage_key
-    storage_path.parent.mkdir(parents=True, exist_ok=True)
-
-    contents = await file.read()
-    storage_path.write_bytes(contents)
-
-    job_id = await create_job(
-        pool=app.state.db_pool,
-        dataset_id=dataset_id,
-        storage_key=storage_key,
-        parser_hint=parser_hint,
-    )
-
-    queued = await app.state.redis.enqueue_job(
-        "validate_upload_job",
-        job_id,
-        dataset_id,
-        storage_key,
-    )
-
-    return {
-        "job_id": job_id,
-        "queue_job_id": queued.job_id if queued else None,
-        "storage_key": storage_key,
-    }
-
-
-@app.get("/uploads/jobs/{job_id}")
-async def get_upload_job(job_id: str):
-    job = await get_job(app.state.db_pool, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-    return job
-
-
-@app.get("/uploads/jobs/{job_id}/events")
-async def stream_upload_job_events(job_id: str, interval: float = 1.0):
-    """SSE stream for live job progress updates.
-
-    Sends `progress` events whenever job state changes and a final `done` event
-    once the job reaches a terminal stage.
-    """
-    job = await get_job(app.state.db_pool, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-
-    poll_interval = max(0.2, min(interval, 5.0))
-
-    async def event_stream():
-        last_payload = None
-        while True:
-            current = await get_job(app.state.db_pool, job_id)
-            if not current:
-                yield 'event: error\ndata: {"message":"job not found"}\n\n'
-                break
-
-            payload = json.dumps(current, default=str)
-            if payload != last_payload:
-                yield f"event: progress\\ndata: {payload}\\n\\n"
-                last_payload = payload
-
-            if current.get("stage") in {"completed", "failed"}:
-                yield "event: done\\ndata: {}\\n\\n"
-                break
-
-            await asyncio.sleep(poll_interval)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@app.post("/uploads/jobs/{job_id}/commit")
-async def commit_upload_job(job_id: str):
-    """Trigger phase 2: write validated data to database."""
-    job = await get_job(app.state.db_pool, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-    
-    if job["status"] != "validated":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Job must be in 'validated' status, current: {job['status']}",
-        )
-    
-    queued = await app.state.redis.enqueue_job(
-        "commit_upload_job",
-        job_id,
-        job["dataset_id"],
-        job["storage_key"],
-    )
-    
-    return {
-        "job_id": job_id,
-        "queue_job_id": queued.job_id if queued else None,
-        "message": "Commit phase enqueued; write will begin shortly.",
-    }
-
-
-@app.get("/uploads/jobs/{job_id}/errors")
-async def get_upload_job_errors(job_id: str, limit: int = 100, offset: int = 0):
-    job = await get_job(app.state.db_pool, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-
-    errors = await list_job_errors(
-        pool=app.state.db_pool,
-        job_id=job_id,
-        limit=max(1, min(limit, 1000)),
-        offset=max(0, offset),
-    )
-    return {"items": errors, "count": len(errors)}
-
-
-@app.get("/uploads/jobs/{job_id}/errors/export")
-async def export_upload_job_errors(job_id: str):
-    """Export errors as CSV."""
-    job = await get_job(app.state.db_pool, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-    
-    return StreamingResponse(
-        get_job_errors_as_csv(app.state.db_pool, job_id),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=errors_{job_id}.csv"},
-    )
+app.include_router(uploads.router)
+app.include_router(search.router)
+app.include_router(exports.router)
+app.include_router(datasets.router)
+app.include_router(admin.router)
