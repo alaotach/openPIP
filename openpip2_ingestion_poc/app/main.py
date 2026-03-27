@@ -3,11 +3,14 @@ import uuid
 from pathlib import Path
 
 from arq import create_pool
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, StreamingResponse
+
 
 from .config import get_database_url, get_redis_settings, get_storage_root
-from .db import create_db_pool, create_job, get_job, init_db, list_job_errors
-
+from .db import (
+    create_db_pool, create_job, get_job, init_db, list_job_errors, 
+    get_job_errors_as_csv, update_job_status
+)
 app = FastAPI(title="openPIP 2.0 Ingestion POC", version="0.1.0")
 
 
@@ -59,7 +62,7 @@ async def create_upload_job(
     )
 
     queued = await app.state.redis.enqueue_job(
-        "ingest_upload_job",
+        "validate_upload_job",
         job_id,
         dataset_id,
         storage_key,
@@ -80,6 +83,33 @@ async def get_upload_job(job_id: str):
     return job
 
 
+@app.post("/uploads/jobs/{job_id}/commit")
+async def commit_upload_job(job_id: str):
+    """Trigger phase 2: write validated data to database."""
+    job = await get_job(app.state.db_pool, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    
+    if job["status"] != "validated":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job must be in 'validated' status, current: {job['status']}",
+        )
+    
+    queued = await app.state.redis.enqueue_job(
+        "commit_upload_job",
+        job_id,
+        job["dataset_id"],
+        job["storage_key"],
+    )
+    
+    return {
+        "job_id": job_id,
+        "queue_job_id": queued.job_id if queued else None,
+        "message": "Commit phase enqueued; write will begin shortly.",
+    }
+
+
 @app.get("/uploads/jobs/{job_id}/errors")
 async def get_upload_job_errors(job_id: str, limit: int = 100, offset: int = 0):
     job = await get_job(app.state.db_pool, job_id)
@@ -93,3 +123,17 @@ async def get_upload_job_errors(job_id: str, limit: int = 100, offset: int = 0):
         offset=max(0, offset),
     )
     return {"items": errors, "count": len(errors)}
+
+
+@app.get("/uploads/jobs/{job_id}/errors/export")
+async def export_upload_job_errors(job_id: str):
+    """Export errors as CSV."""
+    job = await get_job(app.state.db_pool, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    
+    return StreamingResponse(
+        get_job_errors_as_csv(app.state.db_pool, job_id),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=errors_{job_id}.csv"},
+    )

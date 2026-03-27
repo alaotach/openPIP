@@ -37,13 +37,34 @@ def extract_identifier(raw: str, row_no: int) -> tuple[str, str]:
 
 
 def parse_confidence(raw: str) -> float | None:
+    """Parse confidence from PSI-MI TAB column 15.
+    
+    Handles multiple formats per PSI-MI 2.7 spec:
+    - intact-miscore:0.85 (MiScore, most canonical)
+    - score:0.85 (generic score prefix)
+    - mi-score:0.85 (alternate spelling)
+    - 0.85 (bare float, least preferred but valid)
+    Returns None for '-' or missing values.
+    """
+    if not raw or raw == "-":
+        return None
+    
     for token in split_multivalue(raw):
-        if token.startswith("intact-miscore:"):
-            _, score = token.split(":", 1)
-            try:
-                return float(score)
-            except ValueError:
-                return None
+        # Try typed formats first (most reliable)
+        if ":" in token:
+            prefix, val = token.split(":", 1)
+            if prefix.lower() in ("intact-miscore", "mi-score", "miscore", "score"):
+                try:
+                    return float(val.strip())
+                except ValueError:
+                    continue
+        
+        # Try bare float if no prefix
+        try:
+            return float(token.strip())
+        except ValueError:
+            continue
+    
     return None
 
 

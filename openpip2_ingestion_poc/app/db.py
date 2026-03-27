@@ -5,6 +5,7 @@ import asyncpg
 
 from .models import CanonicalInteraction
 
+from typing import Iterator
 DDL = """
 CREATE TABLE IF NOT EXISTS upload_jobs (
     id UUID PRIMARY KEY,
@@ -12,10 +13,13 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
     storage_key TEXT NOT NULL,
     parser_hint TEXT,
     stage TEXT NOT NULL CHECK (stage IN ('queued','parsing','validating','writing','completed','failed')),
+    status TEXT NOT NULL DEFAULT 'parsing' CHECK (status IN ('parsing', 'validated', 'committed')),
     total_rows BIGINT,
     processed_rows BIGINT NOT NULL DEFAULT 0,
     inserted_rows BIGINT NOT NULL DEFAULT 0,
+    skipped_rows BIGINT NOT NULL DEFAULT 0,
     failed_rows BIGINT NOT NULL DEFAULT 0,
+    validated_data_location TEXT,
     error_summary TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -167,41 +171,43 @@ async def add_job_error(
 
 async def bulk_insert_interactions(pool: asyncpg.Pool, rows: list[CanonicalInteraction]) -> int:
     if not rows:
-        return 0
+        return 0, 0
 
     async with pool.acquire() as conn:
-        result = await conn.executemany(
+        # Use RETURNING id to count actual inserts (ON CONFLICT DO NOTHING won't return conflicting rows)
+        # We'll insert with RETURNING and count the results
+        inserted = 0
+        for row in rows:
+            result = await conn.fetchval(
             """
-            INSERT INTO interactions (
-                dataset_id, pair_key, interactor_a_ns, interactor_a_id,
-                interactor_b_ns, interactor_b_id, interaction_type, confidence_score,
-                publication_id, source_file, source_row, parser_version
-            )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-            ON CONFLICT (dataset_id, pair_key, publication_id, source_row) DO NOTHING
-            """,
-            [
-                (
-                    r.dataset_id,
-                    r.pair_key,
-                    r.interactor_a_ns,
-                    r.interactor_a_id,
-                    r.interactor_b_ns,
-                    r.interactor_b_id,
-                    r.interaction_type,
-                    r.confidence_score,
-                    r.publication_id,
-                    r.source_file,
-                    r.source_row,
-                    r.parser_version,
+
+                INSERT INTO interactions (
+                    dataset_id, pair_key, interactor_a_ns, interactor_a_id,
+                    interactor_b_ns, interactor_b_id, interaction_type, confidence_score,
+                    publication_id, source_file, source_row, parser_version
                 )
-                for r in rows
-            ],
-        )
-
-    # asyncpg executemany returns command status from last statement; count from batch length for job telemetry.
-    return len(rows)
-
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                ON CONFLICT (dataset_id, pair_key, publication_id, source_row) DO NOTHING
+                RETURNING id
+                """,
+                row.dataset_id,
+                row.pair_key,
+                row.interactor_a_ns,
+                row.interactor_a_id,
+                row.interactor_b_ns,
+                row.interactor_b_id,
+                row.interaction_type,
+                row.confidence_score,
+                row.publication_id,
+                row.source_file,
+                row.source_row,
+                row.parser_version,
+            )
+            if result is not None:
+                inserted += 1
+    
+    skipped = len(rows) - inserted
+    return inserted, skipped
 
 async def complete_job(pool: asyncpg.Pool, job_id: str, inserted_rows: int, failed_rows: int) -> None:
     async with pool.acquire() as conn:
@@ -231,3 +237,72 @@ async def fail_job(pool: asyncpg.Pool, job_id: str, reason: str, inserted_rows: 
             failed_rows,
             reason,
         )
+
+
+    async def update_job_status(
+        pool: asyncpg.Pool, job_id: str, status: str
+    ) -> None:
+        """Update job status: parsing → validated → committed."""
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE upload_jobs
+                SET status = $2, updated_at = now()
+                WHERE id = $1::uuid
+                """,
+                job_id,
+                status,
+            )
+
+
+    async def complete_job_with_skipped(
+        pool: asyncpg.Pool,
+        job_id: str,
+        inserted_rows: int,
+        skipped_rows: int,
+        failed_rows: int,
+    ) -> None:
+        """Mark job completed, tracking duplicates skipped."""
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE upload_jobs
+                SET stage = 'completed', inserted_rows = $2, skipped_rows = $3,
+                    failed_rows = $4, updated_at = now()
+                WHERE id = $1::uuid
+                """,
+                job_id,
+                inserted_rows,
+                skipped_rows,
+                failed_rows,
+            )
+
+
+    async def get_job_errors_as_csv(
+        pool: asyncpg.Pool, job_id: str
+    ) -> Iterator[str]:
+        """Export job errors as CSV lines."""
+        yield "source_row,error_code,error_message,raw_payload\n"
+        async with pool.acquire() as conn:
+            cursor = await conn.cursor(
+                """
+                SELECT source_row, error_code, error_message, raw_payload
+                FROM upload_job_errors
+                WHERE job_id = $1::uuid
+                ORDER BY id ASC
+                """,
+                job_id,
+            )
+            async for row in cursor:
+                source_row, error_code, error_message, raw_payload = row
+                # CSV escape: quote values with commas/quotes
+                def csv_escape(s):
+                    if s is None:
+                        return ""
+                    s = str(s)
+                    if "," in s or '"' in s or "\n" in s:
+                        s = s.replace('"', '""')
+                        return f'"{s}"'
+                    return s
+            
+                yield f"{csv_escape(source_row)},{csv_escape(error_code)},{csv_escape(error_message)},{csv_escape(raw_payload)}\n"

@@ -1,3 +1,5 @@
+"""ARQ worker jobs for two-phase ingestion: validate then commit."""
+
 from pathlib import Path
 
 from .config import get_parser_version
@@ -8,13 +10,10 @@ from .db import (
     fail_job,
     set_job_progress,
     set_job_stage,
+    update_job_status,
 )
 from .models import CanonicalInteraction, RowValidationError
 from .parser import parse_mitab_line
-
-
-
-from .db import update_job_status
 
 
 async def validate_upload_job(
